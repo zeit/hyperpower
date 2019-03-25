@@ -1,12 +1,28 @@
+const defaultConfig = {
+  shake: null, // null so false can override 'wow' mode
+  colorMode: 'custom', // 'cursor', 'custom', 'rainbow'
+  colors: ['red', 'green', 'blue'],
+  particleSize: 3,
+  minSpawnCount: 10,
+  maxSpawnCount: 12,
+  maximumParticles: 500
+};
 const throttle = require('lodash.throttle');
 const Color = require('color');
 const nameToHex = require('convert-css-color-name-to-hex');
-const toHex = (str) => Color(nameToHex(str)).hexString();
+const toHex = (str) => Color(nameToHex(str)).hex();
 const values = require('lodash.values');
+const random = require('lodash.random');
+const RAINBOW_COLORS = [	
+  '#a800ff',	
+  '#0079ff',	
+  '#00f11d',	
+  '#ffef00',	
+  '#ff7f00',	
+  '#ff0900'	
+].map(color => Color(color).hex());
 
 // Constants for the particle simulation.
-const MAX_PARTICLES = 500;
-const PARTICLE_NUM_RANGE = () => 5 + Math.round(Math.random() * 5);
 const PARTICLE_GRAVITY = 0.075;
 const PARTICLE_ALPHA_FADEOUT = 0.96;
 const PARTICLE_VELOCITY_RANGE = {
@@ -97,6 +113,7 @@ exports.decorateTerm = (Term, { React, notify }) => {
       super(props, context);
       // Since we'll be passing these functions around, we need to bind this
       // to each.
+      this._getColors = this._getColors.bind(this);
       this._drawFrame = this._drawFrame.bind(this);
       this._resizeCanvas = this._resizeCanvas.bind(this);
       this._onDecorated = this._onDecorated.bind(this);
@@ -108,6 +125,34 @@ exports.decorateTerm = (Term, { React, notify }) => {
       // We'll set these up when the terminal is available in `_onDecorated`
       this._div = null;
       this._canvas = null;
+
+      this._loadSettings();
+      config.subscribe(() => {
+        this._loadSettings();
+      });
+    }
+
+    _loadSettings() {
+      const userSettings = config.getConfig().hyperPower || {};
+      this._settings = {
+        shake: userSettings.shake != null ? userSettings.shake : defaultConfig.shake,
+        colorMode: userSettings.colorMode || defaultConfig.colorMode,
+        colors: userSettings.colors || defaultConfig.colors,
+        particleSize: userSettings.particleSize || defaultConfig.particleSize,
+        minSpawnCount: userSettings.minSpawnCount || defaultConfig.minSpawnCount,
+        maxSpawnCount: userSettings.minSpawnCount || defaultConfig.maxSpawnCount,
+        maximumParticles: userSettings.maximumParticles || defaultConfig.maximumParticles
+      };
+    }
+
+    _getColors() {
+      if (this._settings.colorMode === 'cursor') {
+        return [toHex(this.props.cursorColor)];
+      } else if (this._settings.colorMode === 'rainbow') {
+        return RAINBOW_COLORS;
+      } else {
+        return values(this._settings.colors).map(toHex);
+      }
     }
 
     _onDecorated (term) {
@@ -137,6 +182,8 @@ exports.decorateTerm = (Term, { React, notify }) => {
 
     // Draw the next frame in the particle simulation.
     _drawFrame () {
+      const particleSize = this._settings.particleSize;
+      const maximumParticles = this._settings.maximumParticles;
       this._particles.length && this._canvasContext.clearRect(0, 0, this._canvas.width, this._canvas.height);
       this._particles.forEach((particle) => {
         particle.velocity.y += PARTICLE_GRAVITY;
@@ -144,10 +191,10 @@ exports.decorateTerm = (Term, { React, notify }) => {
         particle.y += particle.velocity.y;
         particle.alpha *= PARTICLE_ALPHA_FADEOUT;
         this._canvasContext.fillStyle = `rgba(${particle.color.join(',')}, ${particle.alpha})`;
-        this._canvasContext.fillRect(Math.round(particle.x - 1), Math.round(particle.y - 1), 3, 3);
+        this._canvasContext.fillRect(Math.round(particle.x - 1), Math.round(particle.y - 1), particleSize, particleSize);
       });
       this._particles = this._particles
-        .slice(Math.max(this._particles.length - MAX_PARTICLES, 0))
+        .slice(Math.max(this._particles.length - maximumParticles, 0))
         .filter((particle) => particle.alpha > 0.1);
       if (this._particles.length > 0 || this.props.needsRedraw) {
         window.requestAnimationFrame(this._drawFrame);
@@ -159,10 +206,8 @@ exports.decorateTerm = (Term, { React, notify }) => {
     _spawnParticles (x, y) {
       // const { colors } = this.props;
       const length = this._particles.length;
-      const colors = this.props.wowMode
-        ? values(this.props.colors).map(toHex)
-        : [toHex(this.props.cursorColor)];
-      const numParticles = PARTICLE_NUM_RANGE();
+      const colors = this._getColors();
+      const numParticles = random(this._settings.maxSpawnCount, this._settings.maxSpawnCount);
       for (let i = 0; i < numParticles; i++) {
         const colorCode = colors[i % colors.length];
         const r = parseInt(colorCode.slice(1, 3), 16);
@@ -197,7 +242,7 @@ exports.decorateTerm = (Term, { React, notify }) => {
     // to the terminal container.
     _shake () {
       // TODO: Maybe we should do this check in `_onCursorMove`?
-      if(!this.props.wowMode) return;
+      if (this._settings.shake === false || !this.props.wowMode) return;
 
       const intensity = 1 + 2 * Math.random();
       const x = intensity * (Math.random() > 0.5 ? -1 : 1);
